@@ -1,0 +1,52 @@
+package models
+
+import "time"
+
+// Lead is a raw, unqualified prospect — the inbox of the funnel. Identity is the
+// surrogate ID (assigned by internal/db via NextSequence). Email is optional and
+// non-unique. On conversion, ContactID (and optionally DealID) back-reference the
+// records created from this lead and Status becomes StatusConverted.
+type Lead struct {
+	ID        uint64     `json:"id"`
+	Name      string     `json:"name"`
+	Company   string     `json:"company,omitempty"`
+	Email     string     `json:"email,omitempty"`
+	Phone     string     `json:"phone,omitempty"`
+	Tags      []string   `json:"tags,omitempty"`
+	Source    Source     `json:"source,omitempty"`
+	Status    LeadStatus `json:"status"`
+	Notes     string     `json:"notes,omitempty"`
+	ContactID uint64     `json:"contactId,omitempty"` // 0 until converted
+	DealID    uint64     `json:"dealId,omitempty"`    // 0 unless a deal was made on conversion
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+}
+
+// Contact is a known person being actively dealt with. SourceLeadID records the
+// Lead it was converted from (0 if created directly).
+type Contact struct {
+	ID           uint64    `json:"id"`
+	Name         string    `json:"name"`
+	Company      string    `json:"company,omitempty"`
+	Email        string    `json:"email,omitempty"`
+	Phone        string    `json:"phone,omitempty"`
+	Tags         []string  `json:"tags,omitempty"`
+	Notes        string    `json:"notes,omitempty"`
+	SourceLeadID uint64    `json:"sourceLeadId,omitempty"` // 0 if created directly
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// Deal is an opportunity owned by exactly one Contact. Value is paired with a
+// per-deal Currency code (no cross-currency conversion — see spec Non-Goals).
+type Deal struct {
+	ID        uint64    `json:"id"`
+	Title     string    `json:"title"`
+	ContactID uint64    `json:"contactId"`
+	Value     float64   `json:"value"`
+	Currency  string    `json:"currency,omitempty"`
+	Stage     DealStage `json:"stage"`
+	Notes     string    `json:"notes,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}

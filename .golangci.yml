@@ -1,0 +1,12 @@
+# golangci-lint v2 configuration. Start minimal; grow deliberately.
+# Docs: https://golangci-lint.run/
+version: "2"
+
+linters:
+  # The "standard" set enables errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+
+formatters:
+  enable:
+    - gofumpt # stricter gofmt
+    - gci     # deterministic import grouping/ordering

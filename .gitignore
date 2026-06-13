@@ -1,0 +1,31 @@
+# Binaries
+/microapp-crm
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test & coverage output
+*.test
+*.out
+coverage.*
+
+# Build output
+/dist/
+/bin/
+
+# bbolt data files (local DB)
+*.db
+
+# Env & secrets
+.env
+.env.*
+
+# Dependencies (only if vendoring is unused)
+/vendor/
+
+# IDE / editor
+/.idea/
+/.vscode/
+*.swp
