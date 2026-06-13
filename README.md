@@ -35,3 +35,22 @@ make check        # fmt + tidy + lint + test
 
 > The surfaces are not implemented yet — this is the initial scaffold. `make build` / `make test`
 > are green from day one; running a mode currently reports "not yet implemented".
+
+`make check` (fmt + tidy + lint + test) mirrors CI and is the gate to run before pushing.
+
+## Project layout
+
+```
+main.go            flag parsing; dispatches to the selected surface
+internal/models    plain domain structs (Lead, Contact, Deal) + enums — no persistence imports
+internal/db        the Store — the only bbolt-aware package; all CRUD, validation, indexes,
+                   and cross-entity use-cases (lead conversion, contact cascade-delete)
+internal/server    (planned) MCP stdio server, consuming internal/db
+internal/tui       (planned) tview TUI, consuming internal/db
+docs/              SPECIFICATIONS.md — the source of truth
+.claude/rules/     layer conventions (bbolt, MCP, tview, testing, spec) read by Claude Code
+```
+
+The layering rule: only `internal/db` touches bbolt; every other layer works with plain models.
+Both surfaces consume the same `Store`, so business logic lives in one place. See
+[`CLAUDE.md`](CLAUDE.md) for the full architecture and contributor guidance.

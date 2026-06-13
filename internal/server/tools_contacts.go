@@ -1,0 +1,121 @@
+package server
+
+import (
+	"context"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+	"github.com/techthos/microapp-crm/internal/models"
+)
+
+type createContactArgs struct {
+	Name    string   `json:"name" jsonschema:"required,description=Contact name (required)"`
+	Company string   `json:"company" jsonschema:"description=Company name"`
+	Email   string   `json:"email" jsonschema:"description=Email address"`
+	Phone   string   `json:"phone" jsonschema:"description=Phone number"`
+	Tags    []string `json:"tags" jsonschema:"description=Freeform tags"`
+	Notes   string   `json:"notes" jsonschema:"description=Freeform notes"`
+}
+
+type listContactsArgs struct {
+	Query string `json:"query" jsonschema:"description=Substring match on name/company/email/tag (blank = all)"`
+	Email string `json:"email" jsonschema:"description=Exact email lookup via index"`
+	Tag   string `json:"tag" jsonschema:"description=Match contacts carrying this tag"`
+}
+
+type updateContactArgs struct {
+	ID      uint64   `json:"id" jsonschema:"required,description=Contact id"`
+	Name    string   `json:"name" jsonschema:"required,description=Contact name (required)"`
+	Company string   `json:"company" jsonschema:"description=Company name"`
+	Email   string   `json:"email" jsonschema:"description=Email address"`
+	Phone   string   `json:"phone" jsonschema:"description=Phone number"`
+	Tags    []string `json:"tags" jsonschema:"description=Freeform tags"`
+	Notes   string   `json:"notes" jsonschema:"description=Freeform notes"`
+}
+
+func (h *handlers) registerContactTools(s *server.MCPServer) {
+	s.AddTool(mcp.NewTool(
+		"create_contact",
+		mcp.WithDescription("Create a new contact directly (not via lead conversion)."),
+		mcp.WithInputSchema[createContactArgs](),
+	), mcp.NewTypedToolHandler(h.createContact))
+
+	s.AddTool(mcp.NewTool(
+		"list_contacts",
+		mcp.WithDescription("List or search contacts by query, exact email, or tag."),
+		mcp.WithInputSchema[listContactsArgs](),
+	), mcp.NewTypedToolHandler(h.listContacts))
+
+	s.AddTool(mcp.NewTool(
+		"get_contact",
+		mcp.WithDescription("Fetch a single contact by id."),
+		mcp.WithInputSchema[idArg](),
+	), mcp.NewTypedToolHandler(h.getContact))
+
+	s.AddTool(mcp.NewTool(
+		"update_contact",
+		mcp.WithDescription("Update a contact's editable fields."),
+		mcp.WithInputSchema[updateContactArgs](),
+	), mcp.NewTypedToolHandler(h.updateContact))
+
+	s.AddTool(mcp.NewTool(
+		"delete_contact",
+		mcp.WithDescription("Delete a contact and cascade-delete all of its deals."),
+		mcp.WithInputSchema[idArg](),
+	), mcp.NewTypedToolHandler(h.deleteContact))
+}
+
+func (h *handlers) createContact(_ context.Context, _ mcp.CallToolRequest, a createContactArgs) (*mcp.CallToolResult, error) {
+	c, err := h.store.CreateContact(models.Contact{
+		Name: a.Name, Company: a.Company, Email: a.Email, Phone: a.Phone, Tags: a.Tags, Notes: a.Notes,
+	})
+	if err != nil {
+		return toolErr(err)
+	}
+	return jsonResult(c)
+}
+
+func (h *handlers) listContacts(_ context.Context, _ mcp.CallToolRequest, a listContactsArgs) (*mcp.CallToolResult, error) {
+	var (
+		contacts []models.Contact
+		err      error
+	)
+	switch {
+	case a.Email != "":
+		contacts, err = h.store.FindContactsByEmail(a.Email)
+	case a.Tag != "":
+		contacts, err = h.store.SearchContacts(a.Tag)
+	default:
+		contacts, err = h.store.SearchContacts(a.Query)
+	}
+	if err != nil {
+		return toolErr(err)
+	}
+	return jsonResult(contacts)
+}
+
+func (h *handlers) getContact(_ context.Context, _ mcp.CallToolRequest, a idArg) (*mcp.CallToolResult, error) {
+	c, err := h.store.GetContact(a.ID)
+	if err != nil {
+		return toolErr(err)
+	}
+	return jsonResult(c)
+}
+
+func (h *handlers) updateContact(_ context.Context, _ mcp.CallToolRequest, a updateContactArgs) (*mcp.CallToolResult, error) {
+	c, err := h.store.UpdateContact(models.Contact{
+		ID: a.ID, Name: a.Name, Company: a.Company, Email: a.Email, Phone: a.Phone, Tags: a.Tags, Notes: a.Notes,
+	})
+	if err != nil {
+		return toolErr(err)
+	}
+	return jsonResult(c)
+}
+
+func (h *handlers) deleteContact(_ context.Context, _ mcp.CallToolRequest, a idArg) (*mcp.CallToolResult, error) {
+	deletedDeals, err := h.store.DeleteContact(a.ID)
+	if err != nil {
+		return toolErr(err)
+	}
+	return jsonResult(map[string]any{"deleted": a.ID, "deleted_deal_ids": deletedDeals})
+}

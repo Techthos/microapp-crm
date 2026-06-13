@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	bolt "go.etcd.io/bbolt"
-
 	"github.com/techthos/microapp-crm/internal/models"
+	bolt "go.etcd.io/bbolt"
 )
 
 // CreateContact inserts a new contact (UC-7). Name is required. A fresh
@@ -151,6 +150,56 @@ func contactMatches(c models.Contact, q string) bool {
 		}
 	}
 	return false
+}
+
+// DeleteContact deletes a contact and cascades to all of its deals (UC-11),
+// atomically: every deal owned by the contact, those deals' idx_deal_by_contact
+// entries, and the contact's email-index entry are removed in one transaction.
+// It returns the IDs of the deleted deals. Returns ErrNotFound if the contact
+// does not exist.
+func (s *Store) DeleteContact(id uint64) ([]uint64, error) {
+	var deletedDeals []uint64
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		contacts := tx.Bucket(bucketContacts)
+		raw := contacts.Get(itob(id))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var c models.Contact
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return err
+		}
+
+		// Collect the contact's deals before mutating (don't delete mid-scan).
+		dealIdx := tx.Bucket(bucketDealByContact)
+		prefix := itob(id)
+		var idxKeys [][]byte
+		cur := dealIdx.Cursor()
+		for k, _ := cur.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = cur.Next() {
+			deletedDeals = append(deletedDeals, btoi(k[8:]))
+			idxKeys = append(idxKeys, append([]byte(nil), k...)) // copy: key is txn-scoped
+		}
+
+		deals := tx.Bucket(bucketDeals)
+		for i, dealID := range deletedDeals {
+			if err := deals.Delete(itob(dealID)); err != nil {
+				return fmt.Errorf("delete deal %d: %w", dealID, err)
+			}
+			if err := dealIdx.Delete(idxKeys[i]); err != nil {
+				return fmt.Errorf("delete deal index for %d: %w", dealID, err)
+			}
+		}
+		if normEmail(c.Email) != "" {
+			if err := tx.Bucket(bucketContactByEmail).Delete(contactEmailIndexKey(c.Email, id)); err != nil {
+				return fmt.Errorf("delete contact email index: %w", err)
+			}
+		}
+		return contacts.Delete(itob(id))
+	})
+	if err != nil {
+		return nil, fmt.Errorf("delete contact %d: %w", id, err)
+	}
+	return deletedDeals, nil
 }
 
 // UpdateContact persists field changes to an existing contact (UC-10). ID and

@@ -139,3 +139,13 @@ func contactEmailIndexPrefix(email string) []byte {
 	prefix = append(prefix, 0x00)
 	return prefix
 }
+
+// dealByContactIndexKey builds the composite key for idx_deal_by_contact:
+// big-endian contactID + big-endian dealID. Prefix-scanning by the contactID
+// half yields all of that contact's deals in deal-creation order.
+func dealByContactIndexKey(contactID, dealID uint64) []byte {
+	key := make([]byte, 16)
+	binary.BigEndian.PutUint64(key[:8], contactID)
+	binary.BigEndian.PutUint64(key[8:], dealID)
+	return key
+}

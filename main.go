@@ -14,6 +14,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	mcpserver "github.com/mark3labs/mcp-go/server"
+	"github.com/techthos/microapp-crm/internal/db"
+	"github.com/techthos/microapp-crm/internal/server"
+	"github.com/techthos/microapp-crm/internal/tui"
 )
 
 // version is stamped at build time via -ldflags "-X main.version=...".
@@ -31,6 +36,7 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("microapp-crm", flag.ContinueOnError)
 	mode := fs.String("mode", "tui", "surface to start: tui | mcp")
+	dbPath := fs.String("db", "microapp-crm.db", "path to the bbolt database file")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -41,11 +47,25 @@ func run(args []string) error {
 		return nil
 	}
 
+	// The TUI and MCP server are alternate modes against one bbolt file; only
+	// one runs at a time (single-writer lock). Open the store for the chosen
+	// surface and close it on exit.
 	switch *mode {
-	case "tui", "mcp":
-		// TODO: wire internal/db, then start the chosen surface
-		// (internal/tui or internal/server). Not yet implemented.
-		return fmt.Errorf("mode %q not yet implemented", *mode)
+	case "tui":
+		store, err := db.Open(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		return tui.Run(store)
+	case "mcp":
+		store, err := db.Open(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		// stdio transport: the protocol owns stdout, so logs go to stderr only.
+		return mcpserver.ServeStdio(server.New(store, version))
 	default:
 		return fmt.Errorf("unknown mode %q (want tui or mcp)", *mode)
 	}
