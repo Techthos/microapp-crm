@@ -13,41 +13,41 @@ import (
 // and argument binding.
 
 type createLeadArgs struct {
-	Name    string   `json:"name" jsonschema:"required,description=Lead name (required)"`
-	Company string   `json:"company" jsonschema:"description=Company name"`
-	Email   string   `json:"email" jsonschema:"description=Email address (optional)"`
-	Phone   string   `json:"phone" jsonschema:"description=Phone number"`
-	Tags    []string `json:"tags" jsonschema:"description=Freeform tags"`
-	Source  string   `json:"source" jsonschema:"description=Lead source: web, referral, event, cold-outreach, or other"`
-	Notes   string   `json:"notes" jsonschema:"description=Freeform notes"`
+	Name    string   `json:"name" jsonschema:"Lead name (required)"`
+	Company string   `json:"company,omitempty" jsonschema:"Company name"`
+	Email   string   `json:"email,omitempty" jsonschema:"Email address (optional)"`
+	Phone   string   `json:"phone,omitempty" jsonschema:"Phone number"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"Freeform tags"`
+	Source  string   `json:"source,omitempty" jsonschema:"Lead source: web, referral, event, cold-outreach, or other"`
+	Notes   string   `json:"notes,omitempty" jsonschema:"Freeform notes"`
 }
 
 type listLeadsArgs struct {
-	Status string `json:"status" jsonschema:"description=Filter by status: new, contacted, qualified, converted, lost (blank = all)"`
+	Status string `json:"status,omitempty" jsonschema:"Filter by status: new, contacted, qualified, converted, lost (blank = all)"`
 }
 
 type idArg struct {
-	ID uint64 `json:"id" jsonschema:"required,description=Record id"`
+	ID uint64 `json:"id" jsonschema:"Record id"`
 }
 
 type updateLeadArgs struct {
-	ID      uint64   `json:"id" jsonschema:"required,description=Lead id"`
-	Name    string   `json:"name" jsonschema:"required,description=Lead name (required)"`
-	Company string   `json:"company" jsonschema:"description=Company name"`
-	Email   string   `json:"email" jsonschema:"description=Email address"`
-	Phone   string   `json:"phone" jsonschema:"description=Phone number"`
-	Tags    []string `json:"tags" jsonschema:"description=Freeform tags"`
-	Source  string   `json:"source" jsonschema:"description=Lead source enum"`
-	Status  string   `json:"status" jsonschema:"description=Lead status enum"`
-	Notes   string   `json:"notes" jsonschema:"description=Freeform notes"`
+	ID      uint64   `json:"id" jsonschema:"Lead id"`
+	Name    string   `json:"name" jsonschema:"Lead name (required)"`
+	Company string   `json:"company,omitempty" jsonschema:"Company name"`
+	Email   string   `json:"email,omitempty" jsonschema:"Email address"`
+	Phone   string   `json:"phone,omitempty" jsonschema:"Phone number"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"Freeform tags"`
+	Source  string   `json:"source,omitempty" jsonschema:"Lead source enum"`
+	Status  string   `json:"status,omitempty" jsonschema:"Lead status enum"`
+	Notes   string   `json:"notes,omitempty" jsonschema:"Freeform notes"`
 }
 
 type convertLeadArgs struct {
-	ID           uint64  `json:"id" jsonschema:"required,description=Lead id to convert"`
-	MakeDeal     bool    `json:"make_deal" jsonschema:"description=Also create a deal for the new contact"`
-	DealTitle    string  `json:"deal_title" jsonschema:"description=Deal title (required if make_deal)"`
-	DealValue    float64 `json:"deal_value" jsonschema:"description=Deal monetary value"`
-	DealCurrency string  `json:"deal_currency" jsonschema:"description=Deal 3-letter currency code"`
+	ID           uint64  `json:"id" jsonschema:"Lead id to convert"`
+	MakeDeal     bool    `json:"make_deal,omitempty" jsonschema:"Also create a deal for the new contact"`
+	DealTitle    string  `json:"deal_title,omitempty" jsonschema:"Deal title (required if make_deal)"`
+	DealValue    float64 `json:"deal_value,omitempty" jsonschema:"Deal monetary value"`
+	DealCurrency string  `json:"deal_currency,omitempty" jsonschema:"Deal 3-letter currency code"`
 }
 
 func (h *handlers) registerLeadTools(s *server.MCPServer) {
@@ -104,7 +104,7 @@ func (h *handlers) listLeads(_ context.Context, _ mcp.CallToolRequest, a listLea
 	if err != nil {
 		return toolErr(err)
 	}
-	return jsonResult(leads)
+	return listResult("leads", leads)
 }
 
 func (h *handlers) getLead(_ context.Context, _ mcp.CallToolRequest, a idArg) (*mcp.CallToolResult, error) {

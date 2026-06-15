@@ -246,18 +246,18 @@ to **stderr** only (stdout is the protocol channel). User/input errors →
 | tool              | purpose                              | input (key fields)                                                                 | output                                  |
 |-------------------|--------------------------------------|------------------------------------------------------------------------------------|-----------------------------------------|
 | `create_lead`     | UC-1 add a lead                      | name (req), company, email, phone, tags[], source, notes                           | created Lead                            |
-| `list_leads`      | UC-2 list/filter leads               | status?                                                                            | Lead[]                                  |
+| `list_leads`      | UC-2 list/filter leads               | status?                                                                            | { leads: Lead[] }                       |
 | `get_lead`        | UC-3 fetch a lead                    | id (req)                                                                            | Lead                                    |
 | `update_lead`     | UC-4 edit/advance a lead             | id (req) + any editable fields incl. status                                        | updated Lead                            |
 | `convert_lead`    | UC-5 convert to contact (+deal)      | id (req), make_deal (bool), deal_title?, deal_value?, deal_currency?               | { contact, deal? , lead }               |
 | `delete_lead`     | UC-6 delete a lead                   | id (req)                                                                            | ok                                      |
 | `create_contact`  | UC-7 add a contact                   | name (req), company, email, phone, tags[], notes                                   | created Contact                         |
-| `list_contacts`   | UC-8 list/search contacts            | query? (name substring), email?, tag?                                              | Contact[]                               |
+| `list_contacts`   | UC-8 list/search contacts            | query? (name substring), email?, tag?                                              | { contacts: Contact[] }                 |
 | `get_contact`     | UC-9 fetch a contact                 | id (req)                                                                            | Contact                                 |
 | `update_contact`  | UC-10 edit a contact                 | id (req) + editable fields                                                          | updated Contact                         |
 | `delete_contact`  | UC-11 delete (cascade deals)         | id (req)                                                                            | { deleted_deal_ids[] }                  |
 | `create_deal`     | UC-13 add a deal                     | title (req), contact_id (req), value, currency, stage, notes                       | created Deal                            |
-| `list_deals`      | UC-14 list/filter deals              | stage?, contact_id?                                                                 | Deal[]                                  |
+| `list_deals`      | UC-14 list/filter deals              | stage?, contact_id?                                                                 | { deals: Deal[] }                       |
 | `get_deal`        | UC-15 fetch a deal                   | id (req)                                                                            | Deal                                    |
 | `update_deal`     | UC-16 edit/advance a deal            | id (req) + editable fields incl. stage                                             | updated Deal                            |
 | `delete_deal`     | UC-17 delete a deal                  | id (req)                                                                            | ok                                      |
@@ -265,7 +265,10 @@ to **stderr** only (stdout is the protocol channel). User/input errors →
 
 Tools with more than one or two args use typed input structs (`jsonschema` tags) +
 `mcp.WithInputSchema[T]()` / `NewStructuredToolHandler`. Every tool and parameter carries a
-description.
+description. A `jsonschema` tag value is a plain description string (the schema generator,
+`google/jsonschema-go`, treats the whole tag as the description); a field is **required** unless its
+`json` tag carries `omitempty`. List tools return their slice wrapped in a single-key object (e.g.
+`{ leads: [...] }`) because a result's structured content must be a JSON object, never a bare array.
 
 ### Resources (read-only)
 

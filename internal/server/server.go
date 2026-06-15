@@ -48,6 +48,16 @@ func jsonResult(v any) (*mcp.CallToolResult, error) {
 	return mcp.NewToolResultJSON(v)
 }
 
+// listResult wraps a slice under a named key. The MCP spec requires a result's
+// structuredContent to be a JSON object, so list tools must not return a bare
+// array. A nil slice is normalized to an empty array for a stable shape.
+func listResult[T any](key string, items []T) (*mcp.CallToolResult, error) {
+	if items == nil {
+		items = []T{}
+	}
+	return mcp.NewToolResultJSON(map[string]any{key: items})
+}
+
 // toolErr converts a store/business error into a user-facing tool-error result
 // (value, nil error) so the model can react to it rather than the call failing.
 func toolErr(err error) (*mcp.CallToolResult, error) {

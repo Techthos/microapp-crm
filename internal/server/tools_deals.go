@@ -10,27 +10,27 @@ import (
 )
 
 type createDealArgs struct {
-	Title     string  `json:"title" jsonschema:"required,description=Deal title (required)"`
-	ContactID uint64  `json:"contact_id" jsonschema:"required,description=Owning contact id (must exist)"`
-	Value     float64 `json:"value" jsonschema:"description=Monetary value"`
-	Currency  string  `json:"currency" jsonschema:"description=3-letter currency code (required for non-zero value)"`
-	Stage     string  `json:"stage" jsonschema:"required,description=Stage: qualification, proposal, negotiation, won, lost"`
-	Notes     string  `json:"notes" jsonschema:"description=Freeform notes"`
+	Title     string  `json:"title" jsonschema:"Deal title (required)"`
+	ContactID uint64  `json:"contact_id" jsonschema:"Owning contact id (must exist)"`
+	Value     float64 `json:"value,omitempty" jsonschema:"Monetary value"`
+	Currency  string  `json:"currency,omitempty" jsonschema:"3-letter currency code (required for non-zero value)"`
+	Stage     string  `json:"stage" jsonschema:"Stage: qualification, proposal, negotiation, won, lost"`
+	Notes     string  `json:"notes,omitempty" jsonschema:"Freeform notes"`
 }
 
 type listDealsArgs struct {
-	Stage     string `json:"stage" jsonschema:"description=Filter by stage (blank = all)"`
-	ContactID uint64 `json:"contact_id" jsonschema:"description=Filter by owning contact id (0 = all)"`
+	Stage     string `json:"stage,omitempty" jsonschema:"Filter by stage (blank = all)"`
+	ContactID uint64 `json:"contact_id,omitempty" jsonschema:"Filter by owning contact id (0 = all)"`
 }
 
 type updateDealArgs struct {
-	ID        uint64  `json:"id" jsonschema:"required,description=Deal id"`
-	Title     string  `json:"title" jsonschema:"required,description=Deal title (required)"`
-	ContactID uint64  `json:"contact_id" jsonschema:"required,description=Owning contact id"`
-	Value     float64 `json:"value" jsonschema:"description=Monetary value"`
-	Currency  string  `json:"currency" jsonschema:"description=3-letter currency code"`
-	Stage     string  `json:"stage" jsonschema:"required,description=Stage enum"`
-	Notes     string  `json:"notes" jsonschema:"description=Freeform notes"`
+	ID        uint64  `json:"id" jsonschema:"Deal id"`
+	Title     string  `json:"title" jsonschema:"Deal title (required)"`
+	ContactID uint64  `json:"contact_id" jsonschema:"Owning contact id"`
+	Value     float64 `json:"value,omitempty" jsonschema:"Monetary value"`
+	Currency  string  `json:"currency,omitempty" jsonschema:"3-letter currency code"`
+	Stage     string  `json:"stage" jsonschema:"Stage enum"`
+	Notes     string  `json:"notes,omitempty" jsonschema:"Freeform notes"`
 }
 
 func (h *handlers) registerDealTools(s *server.MCPServer) {
@@ -81,7 +81,7 @@ func (h *handlers) listDeals(_ context.Context, _ mcp.CallToolRequest, a listDea
 	if err != nil {
 		return toolErr(err)
 	}
-	return jsonResult(deals)
+	return listResult("deals", deals)
 }
 
 func (h *handlers) getDeal(_ context.Context, _ mcp.CallToolRequest, a idArg) (*mcp.CallToolResult, error) {

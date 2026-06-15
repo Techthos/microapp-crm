@@ -9,28 +9,28 @@ import (
 )
 
 type createContactArgs struct {
-	Name    string   `json:"name" jsonschema:"required,description=Contact name (required)"`
-	Company string   `json:"company" jsonschema:"description=Company name"`
-	Email   string   `json:"email" jsonschema:"description=Email address"`
-	Phone   string   `json:"phone" jsonschema:"description=Phone number"`
-	Tags    []string `json:"tags" jsonschema:"description=Freeform tags"`
-	Notes   string   `json:"notes" jsonschema:"description=Freeform notes"`
+	Name    string   `json:"name" jsonschema:"Contact name (required)"`
+	Company string   `json:"company,omitempty" jsonschema:"Company name"`
+	Email   string   `json:"email,omitempty" jsonschema:"Email address"`
+	Phone   string   `json:"phone,omitempty" jsonschema:"Phone number"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"Freeform tags"`
+	Notes   string   `json:"notes,omitempty" jsonschema:"Freeform notes"`
 }
 
 type listContactsArgs struct {
-	Query string `json:"query" jsonschema:"description=Substring match on name/company/email/tag (blank = all)"`
-	Email string `json:"email" jsonschema:"description=Exact email lookup via index"`
-	Tag   string `json:"tag" jsonschema:"description=Match contacts carrying this tag"`
+	Query string `json:"query,omitempty" jsonschema:"Substring match on name/company/email/tag (blank = all)"`
+	Email string `json:"email,omitempty" jsonschema:"Exact email lookup via index"`
+	Tag   string `json:"tag,omitempty" jsonschema:"Match contacts carrying this tag"`
 }
 
 type updateContactArgs struct {
-	ID      uint64   `json:"id" jsonschema:"required,description=Contact id"`
-	Name    string   `json:"name" jsonschema:"required,description=Contact name (required)"`
-	Company string   `json:"company" jsonschema:"description=Company name"`
-	Email   string   `json:"email" jsonschema:"description=Email address"`
-	Phone   string   `json:"phone" jsonschema:"description=Phone number"`
-	Tags    []string `json:"tags" jsonschema:"description=Freeform tags"`
-	Notes   string   `json:"notes" jsonschema:"description=Freeform notes"`
+	ID      uint64   `json:"id" jsonschema:"Contact id"`
+	Name    string   `json:"name" jsonschema:"Contact name (required)"`
+	Company string   `json:"company,omitempty" jsonschema:"Company name"`
+	Email   string   `json:"email,omitempty" jsonschema:"Email address"`
+	Phone   string   `json:"phone,omitempty" jsonschema:"Phone number"`
+	Tags    []string `json:"tags,omitempty" jsonschema:"Freeform tags"`
+	Notes   string   `json:"notes,omitempty" jsonschema:"Freeform notes"`
 }
 
 func (h *handlers) registerContactTools(s *server.MCPServer) {
@@ -91,7 +91,7 @@ func (h *handlers) listContacts(_ context.Context, _ mcp.CallToolRequest, a list
 	if err != nil {
 		return toolErr(err)
 	}
-	return jsonResult(contacts)
+	return listResult("contacts", contacts)
 }
 
 func (h *handlers) getContact(_ context.Context, _ mcp.CallToolRequest, a idArg) (*mcp.CallToolResult, error) {
