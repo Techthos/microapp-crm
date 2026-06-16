@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **microapp-crm** is a local-first, single-user sales CRM that ships as **one self-contained Go
 binary**. It works a `Lead → Contact → Deal` funnel, persisting everything to a single embedded
 [bbolt](https://github.com/etcd-io/bbolt) file. The same data is exposed through two surfaces
-selected at launch — a **tview TUI** and an **MCP stdio server** — which run as alternate modes,
-never concurrently (bbolt is single-writer).
+selected at launch — a **tview TUI** and an **MCP stdio server**. They may run **concurrently as
+separate local processes**: the Store opens bbolt **per operation** (connection-per-operation), so
+no process holds the lock while idle. See `docs/bbolt-concurrent-access-strategy.md`.
 
 This is a **spec-driven template**. `docs/SPECIFICATIONS.md` is the single source of truth for what
 the app is. Implementation is currently partial: `internal/models` and `internal/db` (Leads,
@@ -26,7 +27,9 @@ These are non-negotiable product boundaries from the spec. Do not cross them wit
   currencies.
 - **No** separate Tasks, Interactions/activity-log, or Organization entities in v1 — context lives in
   freeform `notes`; company is a plain string field.
-- **No** concurrent TUI + MCP access to the same file.
+- **No** networked or cross-machine concurrency. Concurrent TUI + MCP access to the same file *is*
+  supported, but only as **local processes on one machine** (connection-per-operation; brief
+  per-operation locks, not high write contention).
 
 ## Spec is the contract
 
@@ -70,18 +73,23 @@ main.go            flag parsing → dispatch to a surface (TUI or MCP). Stays th
 internal/models    plain domain structs (Lead, Contact, Deal) + enums. NO persistence imports.
 internal/db        the Store: the only bbolt-aware package. All CRUD, validation, indexes,
                    and cross-entity use-cases (lead conversion, contact cascade-delete).
-internal/server    (planned) MCP stdio server — mark3labs/mcp-go. Consumes internal/db.
-internal/tui       (planned) tview TUI. Consumes internal/db.
+internal/server    MCP stdio server — mark3labs/mcp-go. Consumes internal/db.
+internal/tui       tview TUI. Consumes internal/db.
 ```
 
 Both surfaces consume the **same `internal/db` Store**, so business logic lives in one place. The
-two never run at once because `db.Open` sets a bbolt `Timeout` — a held lock fails fast, which is
-what enforces the single-writer / alternate-mode contract.
+two can run concurrently as separate processes because the Store opens bbolt **per operation**
+(connection-per-operation) — no process holds the lock while idle, and a short open `Timeout` with
+backoff retry turns a brief collision into a sub-second wait. The TUI polls `Store.TxID()` and
+refreshes when the MCP process writes. See `docs/bbolt-concurrent-access-strategy.md`.
 
 ### Persistence model (`internal/db`)
 
-- One `Store` wraps `*bolt.DB` plus an injectable `now func() time.Time` (`WithClock` option for
-  deterministic tests). `Open` runs an idempotent bucket migration at startup.
+- One `Store` holds the file `path` (never a live `*bolt.DB`) plus an injectable `now func() time.Time`
+  (`WithClock` option for deterministic tests). `Open` does a one-time read-write bootstrap that
+  creates the file and runs the idempotent bucket migration; thereafter reads/writes open per
+  operation via the internal `view`/`update` helpers. `Store.TxID()` exposes bbolt's committed txid
+  for change detection.
 - Every entity has a surrogate `uint64` ID from `Bucket.NextSequence()`, encoded **big-endian**
   (`itob`/`btoi`) so byte-sorted key order == creation order. List = cursor walk; newest-first =
   reverse walk.

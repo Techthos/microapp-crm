@@ -13,6 +13,7 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+	bolterrors "go.etcd.io/bbolt/errors"
 )
 
 // Bucket names. Defined as package-level []byte constants, never inline literals.
@@ -49,13 +50,26 @@ func putJSON(b *bolt.Bucket, key []byte, v any) error {
 	return b.Put(key, encoded)
 }
 
-// Store owns the bbolt database and exposes repository operations for all
-// entities. Cross-entity use-cases (lead conversion, contact cascade-delete)
-// live on the single Store so they can run inside one transaction.
+// Store exposes repository operations for all entities. It follows the
+// connection-per-operation strategy (see docs/bbolt-concurrent-access-strategy.md):
+// it holds only the file path, never a live *bolt.DB, so an idle Store keeps no
+// file lock. Each read opens a short-lived read-only handle and each write a
+// short-lived read-write handle, which lets the TUI and MCP surfaces run as
+// separate processes against the same file. Cross-entity use-cases (lead
+// conversion, contact cascade-delete) still run inside one transaction.
 type Store struct {
-	db  *bolt.DB
-	now func() time.Time
+	path string
+	now  func() time.Time
 }
+
+// Open-retry tuning. The per-attempt Timeout is kept short and retried with
+// backoff so a brief cross-process lock collision becomes a sub-second wait
+// instead of the hard "timeout" error a long single Timeout would surface.
+const (
+	openTimeout   = 75 * time.Millisecond  // per-attempt lock-acquire timeout
+	openMaxWait   = 3 * time.Second        // total budget across retries
+	openBackoffHi = 200 * time.Millisecond // backoff ceiling
+)
 
 // Option configures a Store at Open time.
 type Option func(*Store)
@@ -66,32 +80,91 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Store) { s.now = now }
 }
 
-// Open opens (creating if needed) the bbolt file at path, applies the bucket
-// migration, and returns a ready Store. A Timeout makes a stale lock fail fast
-// instead of blocking forever — this is what enforces the single-writer /
-// alternate-mode contract between the TUI and MCP surfaces.
+// Open prepares a Store for the bbolt file at path and returns it ready to use.
+// It bootstraps by opening read-write once to create the file and run the bucket
+// migration, then closing — the subsequent read-only opens that reads use cannot
+// create a missing file. After Open returns, the Store holds no file lock.
 func Open(path string, opts ...Option) (*Store, error) {
-	bdb, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
-	if err != nil {
-		return nil, fmt.Errorf("open bbolt at %q: %w", path, err)
-	}
-	s := &Store{db: bdb, now: time.Now}
+	s := &Store{path: path, now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}
-	if err := s.migrate(); err != nil {
-		_ = bdb.Close()
+	bdb, err := s.open(false)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = bdb.Close() }()
+	if err := migrate(bdb); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close closes the underlying database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close releases the Store. In the connection-per-operation model the Store
+// holds no open handle between operations, so there is nothing to close; the
+// method is kept for API symmetry and lifecycle clarity at call sites.
+func (s *Store) Close() error { return nil }
+
+// open acquires a fresh handle for one operation, retrying on a contended lock
+// with linear-capped backoff up to openMaxWait. readOnly selects bbolt's shared
+// (read) lock vs. its exclusive (write) lock. The retry deadline uses real wall
+// time, independent of any injected test clock.
+func (s *Store) open(readOnly bool) (*bolt.DB, error) {
+	opts := &bolt.Options{Timeout: openTimeout, ReadOnly: readOnly}
+	deadline := time.Now().Add(openMaxWait)
+	backoff := 10 * time.Millisecond
+	for {
+		bdb, err := bolt.Open(s.path, 0o600, opts)
+		if err == nil {
+			return bdb, nil
+		}
+		// Only a contended lock is retryable; surface anything else immediately.
+		if !errors.Is(err, bolterrors.ErrTimeout) || time.Now().After(deadline) {
+			return nil, fmt.Errorf("open bbolt at %q (readOnly=%v): %w", s.path, readOnly, err)
+		}
+		time.Sleep(backoff)
+		if backoff < openBackoffHi {
+			backoff *= 2
+		}
+	}
+}
+
+// view runs fn in a read-only transaction on its own short-lived handle.
+func (s *Store) view(fn func(*bolt.Tx) error) error {
+	bdb, err := s.open(true)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = bdb.Close() }()
+	return bdb.View(fn)
+}
+
+// update runs fn in a read-write transaction on its own short-lived handle.
+func (s *Store) update(fn func(*bolt.Tx) error) error {
+	bdb, err := s.open(false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = bdb.Close() }()
+	return bdb.Update(fn)
+}
+
+// TxID returns bbolt's latest committed transaction ID. It increases on every
+// committed write, so a long-lived reader (e.g. the TUI) can poll it to detect
+// that another process has modified the database without scanning any data. See
+// docs/bbolt-concurrent-access-strategy.md.
+func (s *Store) TxID() (int, error) {
+	var id int
+	err := s.view(func(tx *bolt.Tx) error {
+		id = tx.ID()
+		return nil
+	})
+	return id, err
+}
 
 // migrate creates every required top-level bucket idempotently in one txn.
-func (s *Store) migrate() error {
-	return s.db.Update(func(tx *bolt.Tx) error {
+func migrate(bdb *bolt.DB) error {
+	return bdb.Update(func(tx *bolt.Tx) error {
 		for _, name := range allBuckets {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return fmt.Errorf("create bucket %q: %w", name, err)

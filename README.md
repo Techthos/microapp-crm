@@ -9,7 +9,9 @@ The same data is reachable through two surfaces, selected at launch:
 - a **tview** terminal UI for the human operator, and
 - an **MCP stdio server** so an AI assistant can read and update the CRM.
 
-The two modes run one at a time (bbolt is single-writer). The full design lives in
+The two modes can run concurrently as separate local processes against the same file: persistence
+opens bbolt [per operation](docs/bbolt-concurrent-access-strategy.md) so no process holds the lock
+while idle, and the TUI auto-refreshes when the MCP process writes. The full design lives in
 [`docs/SPECIFICATIONS.md`](docs/SPECIFICATIONS.md) — the source of truth for what this app is.
 
 ## Getting Started

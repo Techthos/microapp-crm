@@ -40,7 +40,7 @@ func (s *Store) Convert(leadID uint64, opts ConvertOptions) (ConvertResult, erro
 		return ConvertResult{}, fmt.Errorf("convert lead %d: %w", leadID, errCurrencyRequired)
 	}
 	var res ConvertResult
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		leads := tx.Bucket(bucketLeads)
 		raw := leads.Get(itob(leadID))
 		if raw == nil {

@@ -12,9 +12,12 @@ the table as **Deals** moving through a pipeline. There is no team, no web app, 
 data lives in one embedded bbolt file owned by the process.
 
 The app presents the same data through two surfaces: an interactive **tview TUI** for the human
-operator, and an **MCP stdio server** so an AI assistant can read and update the CRM directly. The
-two surfaces run as **alternate modes of the same binary** (selected at launch), never at the same
-time, because bbolt holds a process-wide write lock.
+operator, and an **MCP stdio server** so an AI assistant can read and update the CRM directly. Each
+surface is a **mode of the same binary** (selected at launch). They **may run concurrently as
+separate local processes** against the same bbolt file: persistence uses a **connection-per-operation**
+strategy so no process holds the bbolt lock while idle — it opens the file only for the duration of
+each read or write. The TUI also polls the file's transaction ID and refreshes when the MCP process
+writes, so the two stay in sync. See `docs/bbolt-concurrent-access-strategy.md`.
 
 ## Goals & Non-Goals
 
@@ -24,18 +27,25 @@ time, because bbolt holds a process-wide write lock.
   **pipeline summary** (deal stages + lead funnel, value grouped by currency).
 - Expose the model through both a **TUI** and an **MCP server**, each consuming the same repository
   layer.
+- Allow the **TUI and MCP modes to run concurrently** as separate local processes against the same
+  file, via a **connection-per-operation** persistence strategy (no process holds the bbolt lock
+  while idle). The TUI auto-refreshes when the other process writes.
 - Keep all persistence in a single embedded **bbolt** file with no external dependencies.
 
 ### Non-Goals (the local-only envelope)
 - ❌ **No** web server, REST/GraphQL API, network service, cloud sync, or message broker.
-- ❌ **No** second binary, daemon, or background process; **no** internet access required to function.
+- ❌ **No** networked daemon or always-on background service, and **no** internet access required to
+  function. (The TUI and MCP modes may run as concurrent **local** processes against the same file —
+  see Goals and Persistence Design.)
 - ❌ **No** multi-user / team features: no accounts, ownership, assignment, or sharing.
 - ❌ **No** currency conversion / FX (there is no network) — monetary totals are reported **per
   currency**, never summed across currencies.
 - ❌ **No** separate Tasks/reminders entity and **no** separate Interactions/activity-log entity in
   v1. Context is captured in a freeform `notes` field on each entity.
 - ❌ **No** separate Organization entity in v1 — company is a plain string field on Lead/Contact.
-- ❌ **No** concurrent TUI + MCP access to the same file (single-writer; run one mode at a time).
+- ❌ **No** networked or cross-machine concurrency — concurrent access is limited to **local
+  processes on one machine** sharing the file (serialized at the file level, brief per-operation
+  locks). High write contention is out of scope; this is a single-user tool.
 
 ## Domain Model
 
@@ -114,8 +124,17 @@ is indexed only as a lookup/dedup hint, never as identity.
 
 ## Persistence Design
 
-- **Store:** `go.etcd.io/bbolt` (aliased `bolt`), one file owned by the process, opened once at
-  startup with a `Timeout`. See `.claude/rules/db-rules.md`.
+- **Store:** `go.etcd.io/bbolt` (aliased `bolt`). The `Store` holds only the file **path**, not a
+  live handle. **Connection-per-operation:** every read opens a short-lived read-only handle and
+  every write a short-lived read-write handle, each closed immediately, so an idle process holds no
+  lock and the TUI and MCP modes can run concurrently. Opening uses a short per-attempt `Timeout`
+  with backoff retry so a brief cross-process collision becomes a sub-second wait, not a failure. A
+  one-time read-write bootstrap at startup creates the file and runs the idempotent bucket migration
+  (read-only opens cannot create the file). See `.claude/rules/db-rules.md` and
+  `docs/bbolt-concurrent-access-strategy.md`.
+- **Change detection:** `Store.TxID()` returns bbolt's latest committed transaction ID (monotonic).
+  Long-lived readers (the TUI) poll it to detect that another process has written, without scanning
+  data.
 - **Serialization:** `encoding/json` for all values. `time.Time` marshals to RFC3339.
 - **Models stay storage-agnostic** (`internal/models`, no bbolt import); all marshal/unmarshal and
   all index maintenance happen in `internal/db` repositories. Callers receive domain models, never
@@ -404,8 +423,11 @@ selection is guarded. Below 80×24 the UI shows a centered "Terminal too small" 
   it; a create form blocks `Ctrl-S` while a required field is empty and saves once valid; the convert
   action, the stage-picker modal, and the cascade-delete confirm modal work; no DB call runs on the
   event loop.
-- **Concurrency:** opening the bbolt file fails fast (via `Timeout`) if another instance holds the
-  lock, proving the single-writer / alternate-mode contract.
+- **Concurrency:** two `Store`s open on the same file concurrently (standing in for the TUI and MCP
+  processes) can both read and write it, and a write through one is visible through the other —
+  proving the connection-per-operation contract. `TxID()` is stable across reads and strictly
+  increases after a committed write, and the TUI's background poll repaints the list when another
+  process writes (no manual reload).
 
 ## Open Questions / Assumptions
 

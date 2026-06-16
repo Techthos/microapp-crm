@@ -22,7 +22,7 @@ func (s *Store) PipelineSummary() (models.PipelineSummary, error) {
 	}
 	statusCounts := make(map[models.LeadStatus]int)
 
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		if err := tx.Bucket(bucketDeals).ForEach(func(_, v []byte) error {
 			var d models.Deal
 			if err := json.Unmarshal(v, &d); err != nil {

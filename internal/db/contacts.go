@@ -21,7 +21,7 @@ func (s *Store) CreateContact(c models.Contact) (models.Contact, error) {
 	c.CreatedAt = now
 	c.UpdatedAt = now
 
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketContacts)
 		id, err := b.NextSequence()
 		if err != nil {
@@ -47,7 +47,7 @@ func (s *Store) CreateContact(c models.Contact) (models.Contact, error) {
 // GetContact fetches a contact by ID (UC-9), returning ErrNotFound if absent.
 func (s *Store) GetContact(id uint64) (models.Contact, error) {
 	var c models.Contact
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		v := tx.Bucket(bucketContacts).Get(itob(id))
 		if v == nil {
 			return ErrNotFound
@@ -63,7 +63,7 @@ func (s *Store) GetContact(id uint64) (models.Contact, error) {
 // ListContacts returns all contacts in creation (ascending ID) order (UC-8).
 func (s *Store) ListContacts() ([]models.Contact, error) {
 	var out []models.Contact
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		return tx.Bucket(bucketContacts).ForEach(func(_, v []byte) error {
 			var c models.Contact
 			if err := json.Unmarshal(v, &c); err != nil {
@@ -87,7 +87,7 @@ func (s *Store) FindContactsByEmail(email string) ([]models.Contact, error) {
 		return nil, nil
 	}
 	var out []models.Contact
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		contacts := tx.Bucket(bucketContacts)
 		c := tx.Bucket(bucketContactByEmail).Cursor()
 		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
@@ -119,7 +119,7 @@ func (s *Store) SearchContacts(query string) ([]models.Contact, error) {
 		return s.ListContacts()
 	}
 	var out []models.Contact
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		return tx.Bucket(bucketContacts).ForEach(func(_, v []byte) error {
 			var c models.Contact
 			if err := json.Unmarshal(v, &c); err != nil {
@@ -159,7 +159,7 @@ func contactMatches(c models.Contact, q string) bool {
 // does not exist.
 func (s *Store) DeleteContact(id uint64) ([]uint64, error) {
 	var deletedDeals []uint64
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		contacts := tx.Bucket(bucketContacts)
 		raw := contacts.Get(itob(id))
 		if raw == nil {
@@ -210,7 +210,7 @@ func (s *Store) UpdateContact(c models.Contact) (models.Contact, error) {
 	if strings.TrimSpace(c.Name) == "" {
 		return models.Contact{}, fmt.Errorf("update contact: %w", errEmptyName)
 	}
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketContacts)
 		existingRaw := b.Get(itob(c.ID))
 		if existingRaw == nil {

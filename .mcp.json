@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "crm": {
+      "command": "./microapp-crm",
+      "args": [
+        "-mode",
+        "mcp"
+      ]
+    }
+  }
+}

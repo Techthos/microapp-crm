@@ -33,7 +33,7 @@ func (s *Store) CreateLead(l models.Lead) (models.Lead, error) {
 	l.CreatedAt = now
 	l.UpdatedAt = now
 
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketLeads)
 		id, err := b.NextSequence()
 		if err != nil {
@@ -54,7 +54,7 @@ func (s *Store) CreateLead(l models.Lead) (models.Lead, error) {
 // GetLead fetches a lead by ID (UC-3), returning ErrNotFound if absent.
 func (s *Store) GetLead(id uint64) (models.Lead, error) {
 	var l models.Lead
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		v := tx.Bucket(bucketLeads).Get(itob(id))
 		if v == nil {
 			return ErrNotFound
@@ -74,7 +74,7 @@ func (s *Store) ListLeads(status models.LeadStatus) ([]models.Lead, error) {
 		return nil, fmt.Errorf("list leads: %w", errInvalidStatus)
 	}
 	var out []models.Lead
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketLeads).Cursor()
 		for k, v := c.Last(); k != nil; k, v = c.Prev() {
 			var l models.Lead
@@ -107,7 +107,7 @@ func (s *Store) UpdateLead(l models.Lead) (models.Lead, error) {
 	if err := validateLeadEnums(l); err != nil {
 		return models.Lead{}, fmt.Errorf("update lead: %w", err)
 	}
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketLeads)
 		raw := b.Get(itob(l.ID))
 		if raw == nil {
@@ -134,7 +134,7 @@ func (s *Store) UpdateLead(l models.Lead) (models.Lead, error) {
 
 // DeleteLead removes a lead by ID (UC-6). Returns ErrNotFound if absent.
 func (s *Store) DeleteLead(id uint64) error {
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketLeads)
 		if b.Get(itob(id)) == nil {
 			return ErrNotFound

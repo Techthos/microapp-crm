@@ -2,12 +2,18 @@ package tui
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/techthos/microapp-crm/internal/db"
 	"github.com/techthos/microapp-crm/internal/models"
 )
+
+// defaultPollEvery is how often the TUI checks whether another process (e.g. the
+// MCP server) has written to the shared bbolt file, so the view stays fresh
+// without a manual reload. See docs/bbolt-concurrent-access-strategy.md.
+const defaultPollEvery = 1500 * time.Millisecond
 
 // Body page names. Sections are swapped by SwitchToPage; transient forms/modals
 // are layered on top.
@@ -85,9 +91,10 @@ type tui struct {
 	prevOverlay overlayKind
 	overlayForm *formView
 
-	sidebarCollapsed bool // manual Ctrl-B toggle
-	autoCollapsed    bool // narrow-terminal auto-collapse
-	inFlight         bool // a mutation is running off the event loop
+	sidebarCollapsed bool          // manual Ctrl-B toggle
+	autoCollapsed    bool          // narrow-terminal auto-collapse
+	inFlight         bool          // a mutation is running off the event loop
+	pollEvery        time.Duration // cross-process refresh interval (0 disables)
 }
 
 // appLayout is the root primitive. It embeds the normal sidebar·body·status
@@ -111,20 +118,26 @@ func (l *appLayout) Draw(screen tcell.Screen) {
 }
 
 // Run builds the TUI over store and blocks until the user quits. It returns the
-// Application's run error to the caller (never panics).
+// Application's run error to the caller (never panics). A background goroutine
+// watches the shared file for writes by another process and refreshes the view.
 func Run(store *db.Store) error {
 	t := newTUI(store)
 	t.loadSync()
-	return t.app.Run()
+	stop := make(chan struct{})
+	go t.watchExternal(stop)
+	err := t.app.Run()
+	close(stop)
+	return err
 }
 
 // newTUI constructs the application, screens, layout, and global key handling.
 func newTUI(store *db.Store) *tui {
 	applyTheme()
 	t := &tui{
-		app:   tview.NewApplication(),
-		store: store,
-		body:  tview.NewPages(),
+		app:       tview.NewApplication(),
+		store:     store,
+		body:      tview.NewPages(),
+		pollEvery: defaultPollEvery,
 	}
 
 	t.header = tview.NewTextView().SetDynamicColors(true)
@@ -431,6 +444,48 @@ func (t *tui) mutate(op func() error) {
 			t.setMessage("[" + colorSuccess + "]✓ saved[-]")
 		})
 	}()
+}
+
+// watchExternal polls the store's transaction ID and, when another process has
+// committed a write to the shared file, re-reads the data and refreshes the
+// screen — the connection-per-operation companion to a manual `r` reload (see
+// docs/bbolt-concurrent-access-strategy.md). lastApplied is owned solely by this
+// goroutine; the overlay/in-flight checks read event-loop state and so run only
+// inside the queued closure. It returns when stop is closed (on app exit).
+func (t *tui) watchExternal(stop <-chan struct{}) {
+	if t.pollEvery <= 0 {
+		return
+	}
+	ticker := time.NewTicker(t.pollEvery)
+	defer ticker.Stop()
+	lastApplied, _ := t.store.TxID() // baseline; a transient error just defers detection
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			id, err := t.store.TxID()
+			if err != nil || id == lastApplied {
+				continue
+			}
+			data := t.fetchAll() // slow read off the event loop
+			applied := make(chan bool, 1)
+			t.app.QueueUpdateDraw(func() {
+				// Don't disturb an open form or an in-flight local mutation;
+				// leave lastApplied so the refresh retries once they clear.
+				if t.overlay == ovForm || t.inFlight {
+					applied <- false
+					return
+				}
+				t.applyData(data)
+				t.setMessage("[" + colorWarn + "]↻ updated from another process[-]")
+				applied <- true
+			})
+			if <-applied {
+				lastApplied = id
+			}
+		}
+	}
 }
 
 // reload re-reads all data off the event loop (the `r` action).

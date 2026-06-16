@@ -6,8 +6,10 @@
 //	microapp-crm -mode tui   # interactive terminal UI (default)
 //	microapp-crm -mode mcp   # MCP stdio server for an AI assistant
 //
-// The two modes never run at once — bbolt holds a process-wide write lock.
-// See docs/SPECIFICATIONS.md for the full contract.
+// The two modes may run concurrently as separate processes against the same
+// file: the store opens bbolt per operation (connection-per-operation) so no
+// process holds the lock while idle. See docs/SPECIFICATIONS.md and
+// docs/bbolt-concurrent-access-strategy.md for the full contract.
 package main
 
 import (
@@ -47,9 +49,9 @@ func run(args []string) error {
 		return nil
 	}
 
-	// The TUI and MCP server are alternate modes against one bbolt file; only
-	// one runs at a time (single-writer lock). Open the store for the chosen
-	// surface and close it on exit.
+	// The TUI and MCP server share one bbolt file. The store opens it per
+	// operation, so the two surfaces can run as concurrent processes. Open the
+	// store for the chosen surface and close it on exit.
 	switch *mode {
 	case "tui":
 		store, err := db.Open(*dbPath)

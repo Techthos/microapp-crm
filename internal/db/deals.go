@@ -38,7 +38,7 @@ func (s *Store) CreateDeal(d models.Deal) (models.Deal, error) {
 	d.CreatedAt = now
 	d.UpdatedAt = now
 
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		if tx.Bucket(bucketContacts).Get(itob(d.ContactID)) == nil {
 			return fmt.Errorf("contact %d: %w", d.ContactID, errMissingContact)
 		}
@@ -65,7 +65,7 @@ func (s *Store) CreateDeal(d models.Deal) (models.Deal, error) {
 // GetDeal fetches a deal by ID (UC-15), returning ErrNotFound if absent.
 func (s *Store) GetDeal(id uint64) (models.Deal, error) {
 	var d models.Deal
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		v := tx.Bucket(bucketDeals).Get(itob(id))
 		if v == nil {
 			return ErrNotFound
@@ -86,7 +86,7 @@ func (s *Store) ListDeals(f DealFilter) ([]models.Deal, error) {
 		return nil, fmt.Errorf("list deals: %w", errInvalidStage)
 	}
 	var out []models.Deal
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err := s.view(func(tx *bolt.Tx) error {
 		deals := tx.Bucket(bucketDeals)
 		appendIfMatch := func(v []byte) error {
 			var d models.Deal
@@ -134,7 +134,7 @@ func (s *Store) UpdateDeal(d models.Deal) (models.Deal, error) {
 	if err := validateDeal(d); err != nil {
 		return models.Deal{}, fmt.Errorf("update deal: %w", err)
 	}
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketDeals)
 		existingRaw := b.Get(itob(d.ID))
 		if existingRaw == nil {
@@ -173,7 +173,7 @@ func (s *Store) UpdateDeal(d models.Deal) (models.Deal, error) {
 // DeleteDeal removes a deal and its idx_deal_by_contact entry (UC-17). Returns
 // ErrNotFound if the deal does not exist.
 func (s *Store) DeleteDeal(id uint64) error {
-	err := s.db.Update(func(tx *bolt.Tx) error {
+	err := s.update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketDeals)
 		raw := b.Get(itob(id))
 		if raw == nil {
