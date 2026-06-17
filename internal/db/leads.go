@@ -5,19 +5,73 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/techthos/microapp-crm/internal/models"
 	bolt "go.etcd.io/bbolt"
 )
 
-// errInvalidSource / errInvalidStatus / errInvalidQuality are lead validation
-// failures.
+// errInvalidSource / errInvalidStatus / errInvalidQuality / errInvalidLeadSort
+// are lead validation failures.
 var (
-	errInvalidSource  = errors.New("invalid lead source")
-	errInvalidStatus  = errors.New("invalid lead status")
-	errInvalidQuality = errors.New("quality must be between 1 and 10 (0 = unscored)")
+	errInvalidSource   = errors.New("invalid lead source")
+	errInvalidStatus   = errors.New("invalid lead status")
+	errInvalidQuality  = errors.New("quality must be between 1 and 10 (0 = unscored)")
+	errInvalidLeadSort = errors.New("invalid lead sort field (want created, quality, or updated)")
 )
+
+// LeadSort selects the field QueryLeads orders by. An empty value defaults to
+// LeadSortCreated (creation order, i.e. by ID).
+type LeadSort string
+
+const (
+	LeadSortCreated LeadSort = "created" // by ID (creation order)
+	LeadSortQuality LeadSort = "quality" // by Quality score, ties broken by ID
+	LeadSortUpdated LeadSort = "updated" // by UpdatedAt, ties broken by ID
+)
+
+// Valid reports whether o is a recognized sort field.
+func (o LeadSort) Valid() bool {
+	switch o {
+	case LeadSortCreated, LeadSortQuality, LeadSortUpdated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Lead listing page-size bounds for QueryLeads.
+const (
+	maxLeadPageSize     = 50
+	defaultLeadPageSize = 50
+)
+
+// LeadQuery parameterizes QueryLeads (UC-2): an optional status filter, an
+// optional case-insensitive substring Search over name/company/email/tags, a
+// sort field + direction, and 1-based pagination. Zero values mean "no
+// filter"; Page < 1 becomes 1, PageSize is clamped to [1, maxLeadPageSize]
+// (0 takes the default), and SortBy "" defaults to creation order.
+type LeadQuery struct {
+	Status   models.LeadStatus
+	Search   string
+	SortBy   LeadSort
+	Asc      bool // false (zero value) = descending: newest/highest first, the default
+	Page     int
+	PageSize int
+}
+
+// LeadPage is one page of QueryLeads results plus the pagination metadata an
+// agent needs to walk subsequent pages. Total/TotalPages describe the full
+// filtered set, not just this page.
+type LeadPage struct {
+	Leads      []models.Lead `json:"leads"`
+	Page       int           `json:"page"`
+	PageSize   int           `json:"pageSize"`
+	Total      int           `json:"total"`
+	TotalPages int           `json:"totalPages"`
+	HasMore    bool          `json:"hasMore"`
+}
 
 // CreateLead inserts a new lead (UC-1). Name is required; Status defaults to
 // "new" when blank and must otherwise be a valid value; a non-empty Source must
@@ -97,6 +151,134 @@ func (s *Store) ListLeads(status models.LeadStatus) ([]models.Lead, error) {
 		return nil, fmt.Errorf("list leads: %w", err)
 	}
 	return out, nil
+}
+
+// QueryLeads is the flexible, paginated lead listing behind the list_leads MCP
+// tool (UC-2). It filters by status and/or a case-insensitive substring Search
+// over name, linked company name, email, and tags; orders the full matching set
+// by q.SortBy (q.Desc to reverse, default newest-first); then returns a single
+// page sized per q.PageSize (clamped to [1, maxLeadPageSize]) along with the
+// totals needed to page through the rest. Like the rest of v1, this is a full
+// primary-bucket scan with in-memory filter/sort — no status or quality index.
+func (s *Store) QueryLeads(q LeadQuery) (LeadPage, error) {
+	if q.Status != "" && !q.Status.Valid() {
+		return LeadPage{}, fmt.Errorf("query leads: %w", errInvalidStatus)
+	}
+	if q.SortBy != "" && !q.SortBy.Valid() {
+		return LeadPage{}, fmt.Errorf("query leads: %w", errInvalidLeadSort)
+	}
+
+	page := q.Page
+	if page < 1 {
+		page = 1
+	}
+	size := q.PageSize
+	switch {
+	case size < 1:
+		size = defaultLeadPageSize
+	case size > maxLeadPageSize:
+		size = maxLeadPageSize
+	}
+	sortBy := q.SortBy
+	if sortBy == "" {
+		sortBy = LeadSortCreated
+	}
+	search := strings.ToLower(strings.TrimSpace(q.Search))
+
+	var matched []models.Lead
+	err := s.view(func(tx *bolt.Tx) error {
+		var names map[uint64]string
+		if search != "" {
+			names = companyNames(tx)
+		}
+		return tx.Bucket(bucketLeads).ForEach(func(_, v []byte) error {
+			var l models.Lead
+			if err := json.Unmarshal(v, &l); err != nil {
+				return err
+			}
+			if q.Status != "" && l.Status != q.Status {
+				return nil
+			}
+			if search != "" && !leadMatches(l, names[l.CompanyID], search) {
+				return nil
+			}
+			matched = append(matched, l)
+			return nil
+		})
+	})
+	if err != nil {
+		return LeadPage{}, fmt.Errorf("query leads: %w", err)
+	}
+
+	sortLeads(matched, sortBy, q.Asc)
+
+	total := len(matched)
+	totalPages := (total + size - 1) / size
+	start := (page - 1) * size
+	var pageLeads []models.Lead
+	if start < total {
+		end := start + size
+		if end > total {
+			end = total
+		}
+		pageLeads = matched[start:end]
+	}
+	return LeadPage{
+		Leads:      pageLeads,
+		Page:       page,
+		PageSize:   size,
+		Total:      total,
+		TotalPages: totalPages,
+		HasMore:    start+len(pageLeads) < total,
+	}, nil
+}
+
+// sortLeads orders leads by the chosen field with ID as a stable, unique
+// tiebreaker. The base comparison is ascending; when asc is false (the default)
+// the whole order is reversed to descending. Because the tiebreak yields a
+// strict total order, negating is well-defined.
+func sortLeads(leads []models.Lead, by LeadSort, asc bool) {
+	sort.SliceStable(leads, func(i, j int) bool {
+		a, b := leads[i], leads[j]
+		var less bool
+		switch by {
+		case LeadSortQuality:
+			if a.Quality != b.Quality {
+				less = a.Quality < b.Quality
+			} else {
+				less = a.ID < b.ID
+			}
+		case LeadSortUpdated:
+			if !a.UpdatedAt.Equal(b.UpdatedAt) {
+				less = a.UpdatedAt.Before(b.UpdatedAt)
+			} else {
+				less = a.ID < b.ID
+			}
+		default: // LeadSortCreated
+			less = a.ID < b.ID
+		}
+		if asc {
+			return less
+		}
+		return !less
+	})
+}
+
+// leadMatches reports whether lead l matches the already-lowercased query q.
+// companyName is the lead's linked company name ("" when unlinked), resolved by
+// the caller so the company stays searchable even though it is now a reference.
+func leadMatches(l models.Lead, companyName, q string) bool {
+	if strings.Contains(strings.ToLower(l.Name), q) ||
+		strings.Contains(strings.ToLower(companyName), q) ||
+		strings.Contains(strings.ToLower(l.Email), q) {
+		return true
+	}
+	for _, t := range l.Tags {
+		if strings.Contains(strings.ToLower(t), q) {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateLead persists edits to a lead's editable fields (UC-4). ID, CreatedAt,

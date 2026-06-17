@@ -234,6 +234,13 @@ as a plain string is upgraded to a `CompanyID` reference by an idempotent startu
   with in-memory filtering. Acceptable because this is a single-user dataset (hundreds–low
   thousands of rows); **no status/stage index in v1.** If volume ever demands it, add
   `idx_lead_by_status` / `idx_deal_by_stage` — that is a spec change.
+- **Leads — search, sort, paginate (`list_leads`):** one full `leads` scan filters by status and an
+  optional case-insensitive substring over name/company/email/tags, sorts the whole matching set
+  in memory by `created` (default), `quality`, or `updated` (`order` desc by default, ID as a stable
+  tiebreaker), then slices out a 1-based page. `page_size` is clamped to `[1, 50]` (default 50;
+  values above 50 are silently capped), and the result carries `total`/`total_pages`/`has_more` so an
+  agent can walk the rest. No lead index in v1 — the scan + in-memory sort is acceptable at
+  single-user scale.
 - **Companies (list / search by name·website·industry):** full `companies` scan. **Records linked to
   a Company** (driving unlink-on-delete): scan `leads`, `contacts`, `deals` for a matching
   `CompanyID`. No company index in v1.
@@ -363,7 +370,7 @@ to **stderr** only (stdout is the protocol channel). User/input errors →
 | tool              | purpose                              | input (key fields)                                                                 | output                                  |
 |-------------------|--------------------------------------|------------------------------------------------------------------------------------|-----------------------------------------|
 | `create_lead`     | UC-1 add a lead                      | name (req), company_id?, email, phone, tags[], quality?, source, notes             | created Lead                            |
-| `list_leads`      | UC-2 list/filter leads               | status?                                                                            | { leads: Lead[] }                       |
+| `list_leads`      | UC-2 list/search/sort/paginate leads | status?, query? (name/company/email/tag substring), sort_by? (created/quality/updated), order? (desc/asc), page?, page_size? (≤50) | { leads: Lead[], page, page_size, total, total_pages, has_more } |
 | `get_lead`        | UC-3 fetch a lead                    | id (req)                                                                            | Lead                                    |
 | `update_lead`     | UC-4 edit/advance a lead             | id (req) + any editable fields incl. status, company_id, quality                   | updated Lead                            |
 | `convert_lead`    | UC-5 convert to contact (+deal)      | id (req), make_deal (bool), deal_title?, deal_value?, deal_currency?               | { contact, deal? , lead }               |
@@ -396,6 +403,9 @@ description. A `jsonschema` tag value is a plain description string (the schema 
 `google/jsonschema-go`, treats the whole tag as the description); a field is **required** unless its
 `json` tag carries `omitempty`. List tools return their slice wrapped in a single-key object (e.g.
 `{ leads: [...] }`) because a result's structured content must be a JSON object, never a bare array.
+`list_leads` is paginated, so it wraps its slice alongside pagination metadata
+(`{ leads, page, page_size, total, total_pages, has_more }`); the other list tools return the full
+slice unpaginated.
 
 ### Resources (read-only)
 
@@ -507,8 +517,12 @@ selection is guarded. Below 80×24 the UI shows a centered "Terminal too small" 
 - **UC-1 Create lead:** a lead with a non-empty name persists with a fresh monotonic ID,
   `Status = new`, and timestamps set; empty name is rejected; invalid `source` is rejected; a
   `quality` outside `1`–`10` is rejected (`0`/unset is accepted).
-- **UC-2 List leads:** all leads are returned newest-first; filtering by a status returns exactly the
-  leads in that status.
+- **UC-2 List leads:** by default leads are returned newest-first; filtering by a status returns
+  exactly the leads in that status; a `query` substring matches case-insensitively on
+  name/company/email/tag; `sort_by` (`created`/`quality`/`updated`) with `order` (`desc` default,
+  `asc`) reorders the full filtered set with ID as a stable tiebreaker; results are paginated 1-based
+  with `page_size` clamped to `[1, 50]` (default 50), and the response reports `total`,
+  `total_pages`, and `has_more` for the full filtered set. An invalid status or `sort_by` is rejected.
 - **UC-3 Get lead:** a known ID returns the lead; an unknown ID returns a clean not-found (no panic).
 - **UC-4 Update lead:** edited fields persist, `UpdatedAt` advances, ID and `CreatedAt` are
   unchanged; an invalid status value is rejected.

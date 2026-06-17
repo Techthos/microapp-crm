@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -24,7 +25,12 @@ type createLeadArgs struct {
 }
 
 type listLeadsArgs struct {
-	Status string `json:"status,omitempty" jsonschema:"Filter by status: new, contacted, qualified, converted, lost (blank = all)"`
+	Status   string `json:"status,omitempty" jsonschema:"Filter by status: new, contacted, qualified, converted, lost (blank = all)"`
+	Query    string `json:"query,omitempty" jsonschema:"Case-insensitive substring match on name/company/email/tag (blank = all)"`
+	SortBy   string `json:"sort_by,omitempty" jsonschema:"Order by: created (default), quality, or updated"`
+	Order    string `json:"order,omitempty" jsonschema:"Sort direction: desc (default, newest/highest first) or asc"`
+	Page     int    `json:"page,omitempty" jsonschema:"1-based page number (default 1)"`
+	PageSize int    `json:"page_size,omitempty" jsonschema:"Results per page, 1-50 (default 50; higher values are clamped to 50)"`
 }
 
 type idArg struct {
@@ -61,7 +67,7 @@ func (h *handlers) registerLeadTools(s *server.MCPServer) {
 
 	s.AddTool(mcp.NewTool(
 		"list_leads",
-		mcp.WithDescription("List leads newest-first, optionally filtered by status."),
+		mcp.WithDescription("List leads with optional status filter, substring search, ordering (created/quality/updated), and pagination (max page size 50). Returns the page plus total/total_pages/has_more."),
 		mcp.WithInputSchema[listLeadsArgs](),
 	), mcp.NewTypedToolHandler(h.listLeads))
 
@@ -102,11 +108,28 @@ func (h *handlers) createLead(_ context.Context, _ mcp.CallToolRequest, a create
 }
 
 func (h *handlers) listLeads(_ context.Context, _ mcp.CallToolRequest, a listLeadsArgs) (*mcp.CallToolResult, error) {
-	leads, err := h.store.ListLeads(models.LeadStatus(a.Status))
+	page, err := h.store.QueryLeads(db.LeadQuery{
+		Status:   models.LeadStatus(a.Status),
+		Search:   a.Query,
+		SortBy:   db.LeadSort(a.SortBy),
+		Asc:      strings.EqualFold(strings.TrimSpace(a.Order), "asc"),
+		Page:     a.Page,
+		PageSize: a.PageSize,
+	})
 	if err != nil {
 		return toolErr(err)
 	}
-	return listResult("leads", leads)
+	if page.Leads == nil {
+		page.Leads = []models.Lead{}
+	}
+	return jsonResult(map[string]any{
+		"leads":       page.Leads,
+		"page":        page.Page,
+		"page_size":   page.PageSize,
+		"total":       page.Total,
+		"total_pages": page.TotalPages,
+		"has_more":    page.HasMore,
+	})
 }
 
 func (h *handlers) getLead(_ context.Context, _ mcp.CallToolRequest, a idArg) (*mcp.CallToolResult, error) {

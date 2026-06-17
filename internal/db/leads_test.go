@@ -94,6 +94,137 @@ func TestListLeads(t *testing.T) {
 	})
 }
 
+func equalIDs(got, want []uint64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestQueryLeads(t *testing.T) {
+	t.Parallel()
+	clk := newClock()
+	store := openTestStore(t, clk)
+
+	// Three leads created oldest→newest, with distinct quality scores.
+	low, _ := store.CreateLead(models.Lead{Name: "Acme Web", Status: models.StatusNew, Quality: 3, Email: "info@acme.io"})
+	clk.advance(time.Hour)
+	high, _ := store.CreateLead(models.Lead{Name: "Beta Corp", Status: models.StatusContacted, Quality: 9, Tags: []string{"vip"}})
+	clk.advance(time.Hour)
+	mid, _ := store.CreateLead(models.Lead{Name: "Acme Labs", Status: models.StatusNew, Quality: 6})
+
+	ids := func(p db.LeadPage) []uint64 {
+		out := make([]uint64, len(p.Leads))
+		for i, l := range p.Leads {
+			out[i] = l.ID
+		}
+		return out
+	}
+
+	t.Run("default is newest-first with full-page metadata", func(t *testing.T) {
+		got, err := store.QueryLeads(db.LeadQuery{})
+		if err != nil {
+			t.Fatalf("QueryLeads: %v", err)
+		}
+		if want := []uint64{mid.ID, high.ID, low.ID}; !equalIDs(ids(got), want) {
+			t.Errorf("order = %v, want %v", ids(got), want)
+		}
+		if got.Total != 3 || got.TotalPages != 1 || got.Page != 1 || got.PageSize != 50 || got.HasMore {
+			t.Errorf("metadata = %+v, want total 3 / 1 page / page 1 / size 50 / no more", got)
+		}
+	})
+
+	t.Run("status filter", func(t *testing.T) {
+		got, err := store.QueryLeads(db.LeadQuery{Status: models.StatusNew})
+		if err != nil {
+			t.Fatalf("QueryLeads: %v", err)
+		}
+		if got.Total != 2 {
+			t.Errorf("total = %d, want 2", got.Total)
+		}
+	})
+
+	t.Run("substring search over name/email/tag", func(t *testing.T) {
+		byName, _ := store.QueryLeads(db.LeadQuery{Search: "acme"})
+		if byName.Total != 2 {
+			t.Errorf("name search total = %d, want 2", byName.Total)
+		}
+		byTag, _ := store.QueryLeads(db.LeadQuery{Search: "VIP"})
+		if byTag.Total != 1 || (len(byTag.Leads) == 1 && byTag.Leads[0].ID != high.ID) {
+			t.Errorf("tag search = %v, want [%d]", ids(byTag), high.ID)
+		}
+		byEmail, _ := store.QueryLeads(db.LeadQuery{Search: "@acme.io"})
+		if byEmail.Total != 1 || (len(byEmail.Leads) == 1 && byEmail.Leads[0].ID != low.ID) {
+			t.Errorf("email search = %v, want [%d]", ids(byEmail), low.ID)
+		}
+	})
+
+	t.Run("sort by quality", func(t *testing.T) {
+		desc, _ := store.QueryLeads(db.LeadQuery{SortBy: db.LeadSortQuality})
+		if want := []uint64{high.ID, mid.ID, low.ID}; !equalIDs(ids(desc), want) {
+			t.Errorf("quality desc = %v, want %v", ids(desc), want)
+		}
+		asc, _ := store.QueryLeads(db.LeadQuery{SortBy: db.LeadSortQuality, Asc: true})
+		if want := []uint64{low.ID, mid.ID, high.ID}; !equalIDs(ids(asc), want) {
+			t.Errorf("quality asc = %v, want %v", ids(asc), want)
+		}
+	})
+
+	t.Run("sort by updated", func(t *testing.T) {
+		// Touch the oldest lead so it becomes the most-recently-updated.
+		clk.advance(time.Hour)
+		if _, err := store.UpdateLead(low); err != nil {
+			t.Fatalf("UpdateLead: %v", err)
+		}
+		got, _ := store.QueryLeads(db.LeadQuery{SortBy: db.LeadSortUpdated})
+		if len(got.Leads) == 0 || got.Leads[0].ID != low.ID {
+			t.Errorf("updated desc first = %v, want %d", ids(got), low.ID)
+		}
+	})
+
+	t.Run("pagination walks the set and reports has_more", func(t *testing.T) {
+		p1, _ := store.QueryLeads(db.LeadQuery{SortBy: db.LeadSortQuality, Page: 1, PageSize: 2})
+		if want := []uint64{high.ID, mid.ID}; !equalIDs(ids(p1), want) {
+			t.Errorf("page 1 = %v, want %v", ids(p1), want)
+		}
+		if !p1.HasMore || p1.Total != 3 || p1.TotalPages != 2 || p1.PageSize != 2 {
+			t.Errorf("page 1 metadata = %+v", p1)
+		}
+		p2, _ := store.QueryLeads(db.LeadQuery{SortBy: db.LeadSortQuality, Page: 2, PageSize: 2})
+		if want := []uint64{low.ID}; !equalIDs(ids(p2), want) {
+			t.Errorf("page 2 = %v, want %v", ids(p2), want)
+		}
+		if p2.HasMore {
+			t.Errorf("page 2 should be the last page")
+		}
+		p3, _ := store.QueryLeads(db.LeadQuery{Page: 3, PageSize: 2})
+		if len(p3.Leads) != 0 || p3.HasMore {
+			t.Errorf("page past end = %+v, want empty", p3)
+		}
+	})
+
+	t.Run("page_size clamped to 50", func(t *testing.T) {
+		got, _ := store.QueryLeads(db.LeadQuery{PageSize: 1000})
+		if got.PageSize != 50 {
+			t.Errorf("page_size = %d, want clamped to 50", got.PageSize)
+		}
+	})
+
+	t.Run("invalid status and sort rejected", func(t *testing.T) {
+		if _, err := store.QueryLeads(db.LeadQuery{Status: models.LeadStatus("bogus")}); err == nil {
+			t.Error("expected error for bad status")
+		}
+		if _, err := store.QueryLeads(db.LeadQuery{SortBy: db.LeadSort("bogus")}); err == nil {
+			t.Error("expected error for bad sort")
+		}
+	})
+}
+
 func TestGetLead(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t, newClock())

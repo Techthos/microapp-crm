@@ -226,6 +226,62 @@ func TestOfferToolsAndLeadCascade(t *testing.T) {
 	}
 }
 
+// leadPageResult mirrors the paginated list_leads response shape.
+type leadPageResult struct {
+	Leads      []models.Lead `json:"leads"`
+	Page       int           `json:"page"`
+	PageSize   int           `json:"page_size"`
+	Total      int           `json:"total"`
+	TotalPages int           `json:"total_pages"`
+	HasMore    bool          `json:"has_more"`
+}
+
+// TestListLeadsPaginationAndSearch exercises the search/sort/paginate surface of
+// list_leads end-to-end through the in-process client.
+func TestListLeadsPaginationAndSearch(t *testing.T) {
+	t.Parallel()
+	c, ctx := setup(t)
+
+	for _, n := range []struct {
+		name    string
+		quality int
+	}{{"Acme One", 2}, {"Acme Two", 8}, {"Beta", 5}} {
+		if r := callTool(t, c, ctx, "create_lead", map[string]any{"name": n.name, "quality": n.quality}); r.IsError {
+			t.Fatalf("create_lead: %s", resultText(t, r))
+		}
+	}
+
+	t.Run("page size clamps and reports has_more", func(t *testing.T) {
+		var p leadPageResult
+		mustJSON(t, callTool(t, c, ctx, "list_leads", map[string]any{"page_size": 2}), &p)
+		if len(p.Leads) != 2 || p.PageSize != 2 || p.Total != 3 || p.TotalPages != 2 || !p.HasMore {
+			t.Errorf("page 1 = %+v", p)
+		}
+	})
+
+	t.Run("search narrows the set", func(t *testing.T) {
+		var p leadPageResult
+		mustJSON(t, callTool(t, c, ctx, "list_leads", map[string]any{"query": "acme"}), &p)
+		if p.Total != 2 {
+			t.Errorf("query total = %d, want 2", p.Total)
+		}
+	})
+
+	t.Run("sort by quality ascending", func(t *testing.T) {
+		var p leadPageResult
+		mustJSON(t, callTool(t, c, ctx, "list_leads", map[string]any{"sort_by": "quality", "order": "asc"}), &p)
+		if len(p.Leads) != 3 || p.Leads[0].Quality != 2 || p.Leads[2].Quality != 8 {
+			t.Errorf("quality asc order = %+v", p.Leads)
+		}
+	})
+
+	t.Run("invalid sort is a tool error", func(t *testing.T) {
+		if r := callTool(t, c, ctx, "list_leads", map[string]any{"sort_by": "bogus"}); !r.IsError {
+			t.Error("expected tool error for bad sort_by")
+		}
+	})
+}
+
 // mustJSON asserts a successful tool result and unmarshals its JSON text into v.
 func mustJSON(t *testing.T, res *mcp.CallToolResult, v any) {
 	t.Helper()
