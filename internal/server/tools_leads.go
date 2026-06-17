@@ -25,7 +25,7 @@ type createLeadArgs struct {
 }
 
 type listLeadsArgs struct {
-	Status   string `json:"status,omitempty" jsonschema:"Filter by status: new, contacted, qualified, converted, lost (blank = all)"`
+	Status   string `json:"status,omitempty" jsonschema:"Filter by status: new, contacted, contacted-first-touch, contacted-followup-1, contacted-followup-2, contacted-followup-3, qualified, converted, lost (blank = all)"`
 	Query    string `json:"query,omitempty" jsonschema:"Case-insensitive substring match on name/company/email/tag (blank = all)"`
 	SortBy   string `json:"sort_by,omitempty" jsonschema:"Order by: created (default), quality, or updated"`
 	Order    string `json:"order,omitempty" jsonschema:"Sort direction: desc (default, newest/highest first) or asc"`

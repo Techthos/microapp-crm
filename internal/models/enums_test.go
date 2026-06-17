@@ -95,8 +95,8 @@ func TestEnumeratorsCoverAllValidValues(t *testing.T) {
 			t.Errorf("Sources() returned %q which is not Valid()", s)
 		}
 	}
-	if got := len(models.LeadStatuses()); got != 5 {
-		t.Errorf("len(LeadStatuses()) = %d, want 5", got)
+	if got := len(models.LeadStatuses()); got != 9 {
+		t.Errorf("len(LeadStatuses()) = %d, want 9", got)
 	}
 	for _, s := range models.LeadStatuses() {
 		if !s.Valid() {

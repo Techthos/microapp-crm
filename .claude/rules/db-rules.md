@@ -115,6 +115,57 @@ defer bdb.Close()
 - `Bucket.ForEach(func(k, v []byte) error)` to walk every pair in lexicographical order. **`v == nil` means the entry is a nested bucket, not a value** — check it. Iteration stops on the first non-nil error. Do **not** mutate the bucket during `ForEach`.
 - `tx.ForEach(func(name []byte, b *bolt.Bucket) error)` walks **top-level buckets**; combine with `b.Stats().KeyN` for per-bucket key counts (useful for diagnostics/migrations).
 
+## List queries — pagination, search & ordering
+
+Open-ended list queries that back a `list_*` MCP tool follow one shape, so agents get a flexible,
+bounded surface (search + ordering + pagination) instead of an unbounded dump. `QueryLeads` /
+`LeadQuery` / `LeadPage` in `internal/db/leads.go` is the **reference implementation** — mirror it
+when adding or extending a list query. (A tiny, fixed-size list may stay a plain unpaginated slice;
+the moment a list is searchable, sortable, or can grow past a screenful, it takes this shape.)
+
+The pattern, per entity `X`:
+
+- **Input struct `XQuery`** — zero values mean "no filter"; criteria compose with **AND**:
+  - filter fields (e.g. status/stage); enum filters validated up front (invalid → reject **before**
+    scanning, wrapped over the enum sentinel).
+  - `Search string` — case-insensitive substring; lowercase+trim once, blank means "no search".
+    Match name/email/tags and **resolve linked company names via `companyNames(tx)`** so a record
+    stays findable by its company even though that's now a reference.
+  - `SortBy XSort` (a string enum with a `Valid()` method) — `""` defaults to creation order;
+    invalid → reject. Always tie-break on **ID** so the order is a strict total order.
+  - `Asc bool` — the zero value (`false`) means **descending** (newest/highest first), the natural
+    default; set it to flip to ascending. (Don't use a `Desc` field — then the zero value would be
+    ascending and contradict the default.)
+  - `Page int` (1-based; `< 1` → 1) and `PageSize int` (clamped to `[1, maxPageSize]`; `0` → default).
+- **Result struct `XPage`** — the page slice plus metadata describing the **full filtered set**
+  (not just the page) so the caller can walk the rest: `Page`, `PageSize`, `Total`, `TotalPages`,
+  `HasMore`.
+- **Method `Store.QueryX(XQuery) (XPage, error)`** — validate, normalize page/size/sort, then in one
+  short `View`: full primary-bucket scan → in-memory filter → `sort.SliceStable` → slice out the
+  page. The in-memory scan is acceptable at single-user scale (hundreds–low thousands of rows); **no
+  per-field index in v1** — adding one is a spec change.
+
+```go
+const (
+    maxLeadPageSize     = 50 // hard ceiling — requests above this are clamped, never rejected
+    defaultLeadPageSize = 50
+)
+
+size := q.PageSize
+switch {
+case size < 1:
+    size = defaultLeadPageSize
+case size > maxLeadPageSize:
+    size = maxLeadPageSize // clamp, don't error
+}
+```
+
+The **max page size is 50** across list queries. Over-max requests are **clamped**, not rejected.
+The MCP handler maps args → `XQuery`, then wraps the page as
+`{ <items>: [...], page, page_size, total, total_pages, has_more }` — the one list tool that returns
+more than the bare `{ <items>: [...] }` single-key object (see `mcp-server.md`). Keep the simple
+`Store.ListX(...)` helper too when internal callers (TUI, prompts) want the whole set unpaginated.
+
 ## Errors
 
 - bbolt exposes stable sentinel errors; match with `errors.Is`, never on string text. Common ones:

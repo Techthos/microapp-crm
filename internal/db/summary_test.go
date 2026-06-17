@@ -17,8 +17,8 @@ func TestPipelineSummaryEmpty(t *testing.T) {
 	if len(got.DealsByStage) != 5 {
 		t.Errorf("DealsByStage = %d groups, want 5", len(got.DealsByStage))
 	}
-	if len(got.LeadsByStatus) != 5 {
-		t.Errorf("LeadsByStatus = %d groups, want 5", len(got.LeadsByStatus))
+	if len(got.LeadsByStatus) != 9 {
+		t.Errorf("LeadsByStatus = %d groups, want 9", len(got.LeadsByStatus))
 	}
 	for _, ss := range got.DealsByStage {
 		if ss.Count != 0 || len(ss.Totals) != 0 {

@@ -36,22 +36,39 @@ func (s Source) Valid() bool {
 type LeadStatus string
 
 const (
-	StatusNew       LeadStatus = "new"
-	StatusContacted LeadStatus = "contacted"
-	StatusQualified LeadStatus = "qualified"
-	StatusConverted LeadStatus = "converted"
-	StatusLost      LeadStatus = "lost"
+	StatusNew                 LeadStatus = "new"
+	StatusContacted           LeadStatus = "contacted"
+	StatusContactedFirstTouch LeadStatus = "contacted-first-touch"
+	StatusContactedFollowup1  LeadStatus = "contacted-followup-1"
+	StatusContactedFollowup2  LeadStatus = "contacted-followup-2"
+	StatusContactedFollowup3  LeadStatus = "contacted-followup-3"
+	StatusQualified           LeadStatus = "qualified"
+	StatusConverted           LeadStatus = "converted"
+	StatusLost                LeadStatus = "lost"
 )
 
-// LeadStatuses returns every valid LeadStatus, in funnel order.
+// LeadStatuses returns every valid LeadStatus, in funnel order. The granular
+// contacted-* states sit between the legacy generic "contacted" and "qualified".
 func LeadStatuses() []LeadStatus {
-	return []LeadStatus{StatusNew, StatusContacted, StatusQualified, StatusConverted, StatusLost}
+	return []LeadStatus{
+		StatusNew,
+		StatusContacted,
+		StatusContactedFirstTouch,
+		StatusContactedFollowup1,
+		StatusContactedFollowup2,
+		StatusContactedFollowup3,
+		StatusQualified,
+		StatusConverted,
+		StatusLost,
+	}
 }
 
 // Valid reports whether s is one of the defined LeadStatus values.
 func (s LeadStatus) Valid() bool {
 	switch s {
-	case StatusNew, StatusContacted, StatusQualified, StatusConverted, StatusLost:
+	case StatusNew, StatusContacted,
+		StatusContactedFirstTouch, StatusContactedFollowup1, StatusContactedFollowup2, StatusContactedFollowup3,
+		StatusQualified, StatusConverted, StatusLost:
 		return true
 	default:
 		return false

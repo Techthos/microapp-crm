@@ -77,7 +77,7 @@ linked back to it by `LeadID`.
 | `Tags`      | []string    | optional, ad-hoc grouping                                        |
 | `Quality`   | int         | optional lead score `1`–`10` (`0` = unscored)                   |
 | `Source`    | string enum | `web` \| `referral` \| `event` \| `cold-outreach` \| `other`    |
-| `Status`    | string enum | `new` \| `contacted` \| `qualified` \| `converted` \| `lost`    |
+| `Status`    | string enum | `new` \| `contacted` \| `contacted-first-touch` \| `contacted-followup-1` \| `contacted-followup-2` \| `contacted-followup-3` \| `qualified` \| `converted` \| `lost` (granular `contacted-*` states sit between the legacy `contacted` and `qualified`) |
 | `Notes`     | string      | freeform, multi-line                                             |
 | `ContactID` | uint64      | `0` until converted; set to the Contact created on conversion    |
 | `DealID`    | uint64      | `0` unless a Deal was created during conversion                  |

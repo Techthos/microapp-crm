@@ -123,8 +123,8 @@ func TestOptionHelpers(t *testing.T) {
 	if got := sourceOptions(); got[0] != "" || len(got) != 6 {
 		t.Errorf("sourceOptions = %v, want blank + 5", got)
 	}
-	if got := statusOptions(); len(got) != 5 {
-		t.Errorf("statusOptions = %d, want 5", len(got))
+	if got := statusOptions(); len(got) != 9 {
+		t.Errorf("statusOptions = %d, want 9", len(got))
 	}
 	if got := indexOf(stageOptions(), "won"); got != 3 {
 		t.Errorf("indexOf(won) = %d, want 3", got)
